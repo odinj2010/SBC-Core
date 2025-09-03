@@ -1,0 +1,12 @@
+[Unit]
+Description=PyPboy Kiosk Application
+After=systemd-user-sessions.service plymouth-quit.service
+
+[Service]
+WorkingDirectory=/home/nfgodin/pypboy
+ExecStart=/usr/bin/xinit /home/nfgodin/pypboy/.venv/bin/python /home/nfgodin/pypboy/main.py -- /usr/bin/X -br -nolisten tcp -keeptty vt1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

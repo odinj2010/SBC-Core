@@ -1,0 +1,22 @@
+customtkinter
+tkinterweb
+psutil
+matplotlib
+Pillow
+google-generativeai
+piper-tts
+pyaudio
+opencv-python
+llama_cpp-python
+pexpect
+obd
+python-vlc
+pygame
+mutagen
+
+# --- Raspberry Pi Specific ---
+# The following packages are required for GPIO functionality on a Raspberry Pi.
+# They are commented out to allow for installation on other platforms like Windows/macOS.
+
+#gpiozero
+#lgpio

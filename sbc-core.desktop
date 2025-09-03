@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=Pypboy Kiosk
+Comment=Run Pypboy in kiosk mode
+Exec=/home/nfgodin/pypboy/start_pypboy.sh
+Type=Application
