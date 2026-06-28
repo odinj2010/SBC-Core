@@ -287,6 +287,7 @@ class VehiclePage(ctk.CTkFrame):
         self.vehicles: List[sqlite3.Row] = []
         self.current_vehicle_id: Optional[int] = None
         self.current_trip_id: Optional[int] = None
+        self.log_update_job: Optional[str] = None
         self.last_baro = 101.3
         self.last_speed = 0.0
         self.last_rpm = 800.0
