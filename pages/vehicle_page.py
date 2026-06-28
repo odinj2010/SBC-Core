@@ -36,12 +36,24 @@ except (ImportError, ModuleNotFoundError):
             def unwatch(self, *args, **kwargs): pass
             def supports(self, *args, **kwargs): return False
             def query(self, *args, **kwargs): return self.OBDResponse()
+        class MockCommand:
+            def __init__(self, name):
+                self.name = name
         class commands:
-            RPM, SPEED, COOLANT_TEMP, THROTTLE_POS, GET_DTC, CLEAR_DTC, VIN = (None,) * 7
+            RPM = MockCommand("RPM")
+            SPEED = MockCommand("SPEED")
+            COOLANT_TEMP = MockCommand("COOLANT_TEMP")
+            THROTTLE_POS = MockCommand("THROTTLE_POS")
+            GET_DTC = MockCommand("GET_DTC")
+            CLEAR_DTC = MockCommand("CLEAR_DTC")
+            VIN = MockCommand("VIN")
+            INTAKE_PRESSURE = MockCommand("INTAKE_PRESSURE")
+            BAROMETRIC_PRESSURE = MockCommand("BAROMETRIC_PRESSURE")
         class OBDResponse:
             value = None
             def is_null(self): return True
-    logging.getLogger(__name__).warning("python-obd library not found. Vehicle page functionality is disabled.")
+    OBD_AVAILABLE = True # Allow simulator mode to run even if library is missing
+    logging.getLogger(__name__).warning("python-obd library not found. Running in Simulator-only mode.")
 
 SERIAL_AVAILABLE = False
 try:
@@ -75,6 +87,115 @@ class OBDCommand:
     unit: str
 
 # --- Helper Classes ---
+class MockOBDConnection:
+    def __init__(self):
+        self.callbacks = {}
+        self.running = False
+        self.thread = None
+        self.rpm = 800.0
+        self.speed = 0.0
+        self.temp = 85.0
+        self.throttle = 15.0
+        self.baro = 101.3
+        self.map = 101.3
+        self.time_counter = 0.0
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+
+    def close(self):
+        self.running = False
+
+    def is_connected(self):
+        return True
+
+    def supports(self, cmd):
+        # The mock supports all telemetry and OBD requests
+        return True
+
+    def watch(self, cmd, callback):
+        self.callbacks[cmd] = callback
+
+    def unwatch(self, cmd):
+        if cmd in self.callbacks:
+            del self.callbacks[cmd]
+
+    def query(self, cmd, force=False):
+        class MockResponse:
+            def __init__(self, val):
+                self.value = val
+            def is_null(self):
+                return self.value is None
+        
+        cmd_name = cmd.name if hasattr(cmd, "name") else str(cmd)
+        if cmd_name == "VIN":
+            return MockResponse("1D4GP24N9DD123456")
+        elif cmd_name == "GET_DTC":
+            return MockResponse([("P0300", "Random/Multiple Cylinder Misfire Detected")])
+        elif cmd_name == "CLEAR_DTC":
+            return MockResponse("OK")
+        return MockResponse(None)
+
+    def _run(self):
+        import math
+        import random
+        while self.running:
+            self.time_counter += 0.2
+            
+            # Simple driving physics simulation
+            self.throttle = 15.0 + math.sin(self.time_counter * 0.1) * 10.0
+            if math.sin(self.time_counter * 0.05) > 0:
+                self.rpm = min(6500.0, 1000 + math.sin(self.time_counter * 0.15) * 4000 + random.uniform(-50, 50))
+                self.speed = min(120.0, 20 + (self.rpm / 50.0))
+                self.throttle = min(100.0, self.throttle + 40.0)
+            else:
+                self.rpm = max(800.0, 1500 + math.sin(self.time_counter * 0.1) * 500 + random.uniform(-20, 20))
+                self.speed = max(0.0, self.speed - 1.0)
+                
+            self.temp = min(105.0, max(85.0, 90.0 + math.sin(self.time_counter * 0.01) * 5.0))
+            
+            # Boost/Vacuum pressure (manifold pressure) simulation
+            load = (self.throttle / 100.0) * (self.rpm / 6500.0)
+            if load > 0.15:
+                # Absolute manifold pressure up to 220 kPa (~17 PSI boost)
+                self.map = 101.3 + (load * 120.0)
+            else:
+                # Intake manifold vacuum down to 30 kPa absolute
+                self.map = 30.0 + (self.throttle * 4.0)
+
+            class MockSensorResponse:
+                def __init__(self, name, magnitude, unit_str):
+                    class Val:
+                        def __init__(self, m, u):
+                            self.magnitude = m
+                            self.units = u
+                        def __str__(self):
+                            return f"{self.magnitude} {self.units}"
+                    self.value = Val(magnitude, unit_str)
+                    self.is_null = lambda: False
+            
+            # Fire callbacks
+            for cmd, cb in list(self.callbacks.items()):
+                if cmd == obd.commands.RPM:
+                    cb(MockSensorResponse("RPM", self.rpm, "rpm"))
+                elif cmd == obd.commands.SPEED:
+                    cb(MockSensorResponse("SPEED", self.speed, "kph"))
+                elif cmd == obd.commands.COOLANT_TEMP:
+                    cb(MockSensorResponse("COOLANT_TEMP", self.temp, "celsius"))
+                elif cmd == obd.commands.THROTTLE_POS:
+                    cb(MockSensorResponse("THROTTLE_POS", self.throttle, "percent"))
+                elif cmd == obd.commands.INTAKE_PRESSURE:
+                    cb(MockSensorResponse("INTAKE_PRESSURE", self.map, "kilopascal"))
+                elif cmd == obd.commands.BAROMETRIC_PRESSURE:
+                    cb(MockSensorResponse("BAROMETRIC_PRESSURE", self.baro, "kilopascal"))
+            
+            time.sleep(0.2)
+
 class GaugeWidget(ctk.CTkFrame):
     """A reusable widget to display a single vehicle statistic."""
     def __init__(self, parent: ctk.CTkFrame, label_text: str, unit_text: str):
@@ -166,7 +287,11 @@ class VehiclePage(ctk.CTkFrame):
         self.vehicles: List[sqlite3.Row] = []
         self.current_vehicle_id: Optional[int] = None
         self.current_trip_id: Optional[int] = None
-        self.log_update_job: Optional[str] = None
+        self.last_baro = 101.3
+        self.last_speed = 0.0
+        self.last_rpm = 800.0
+        self.last_map = 101.3
+        self.last_iat = 308.0
         
         # Supported Commands Config
         self.SUPPORTED_COMMANDS: List[OBDCommand] = [
@@ -308,6 +433,8 @@ class VehiclePage(ctk.CTkFrame):
         else: self.status_label.configure(text="Status: DISCONNECTED", text_color=ERROR_COLOR)
 
     def on_show(self):
+        self.db_manager = VehicleDBManager(Path(self.controller.app_dir) / "vehicle_data.db")
+        self.load_vehicle_profiles()
         if SERIAL_AVAILABLE: self.scan_for_ports()
 
     def on_hide(self):
@@ -356,14 +483,15 @@ class VehiclePage(ctk.CTkFrame):
     # --- OBD Connection Logic ---
     def scan_for_ports(self):
         logger.info("Scanning for serial ports...")
-        ports = [p.device for p in serial.tools.list_ports.comports() if 'ttyUSB' in p.name or 'ttyACM' in p.name]
+        ports = []
+        if SERIAL_AVAILABLE:
+            ports = [p.device for p in serial.tools.list_ports.comports()]
+        
+        # Always add the simulator so developers and users can run it without a car
+        ports.append("SIMULATOR (Demo Mode)")
         self.available_ports = ports
-        if ports:
-            self.port_dropdown.configure(values=ports)
-            self.port_dropdown_var.set(ports[0])
-        else:
-            self.port_dropdown.configure(values=["No ports found..."])
-            self.port_dropdown_var.set("No ports found...")
+        self.port_dropdown.configure(values=ports)
+        self.port_dropdown_var.set(ports[0])
         self._update_ui_state()
         
     def connect_to_obd(self):
@@ -393,7 +521,12 @@ class VehiclePage(ctk.CTkFrame):
 
     def _obd_connection_thread(self, port: str):
         try:
-            self.connection = obd.Async(portstr=port, fast=False, timeout=CONNECTION_TIMEOUT_SECONDS)
+            if port == "SIMULATOR (Demo Mode)":
+                logger.info("Initializing Simulator Mode...")
+                self.connection = MockOBDConnection()
+            else:
+                self.connection = obd.Async(portstr=port, fast=False, timeout=CONNECTION_TIMEOUT_SECONDS)
+                
             self.connection.start()
             if not self.connection.is_connected():
                 raise ConnectionError("Failed to connect after start().")
@@ -421,6 +554,8 @@ class VehiclePage(ctk.CTkFrame):
                 self.on_vehicle_select(vehicle['name'])
         
         self._create_dynamic_gauges()
+        # Spawn background fault monitor
+        threading.Thread(target=self._background_fault_monitor, daemon=True).start()
         if self.current_vehicle_id:
             self.toggle_trip_logging()
 
@@ -437,24 +572,158 @@ class VehiclePage(ctk.CTkFrame):
                 col += 1
                 if col >= max_cols: col, row = 0, row + 1
 
+        # --- Custom Boost / Vacuum pressure calculation ---
+        # 2013 Dodge Dart 1.4T is turbocharged. Boost = Manifold Absolute Pressure (MAP) - Barometric Pressure (BARO)
+        if self.connection.supports(obd.commands.INTAKE_PRESSURE):
+            # Add Gauge widget
+            gauge = GaugeWidget(self.gauge_container_frame, "Turbo Boost", "PSI")
+            gauge.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            self.gauges["BOOST"] = gauge
+            col += 1
+            if col >= max_cols: col, row = 0, row + 1
+
+            # Watch Barometric pressure for calibration
+            if self.connection.supports(obd.commands.BAROMETRIC_PRESSURE):
+                def baro_callback(response: obd.OBDResponse):
+                    if not response.is_null():
+                        self.last_baro = response.value.magnitude
+                self.connection.watch(obd.commands.BAROMETRIC_PRESSURE, callback=baro_callback)
+
+            # Watch Intake Pressure (MAP) and compute relative boost/vacuum
+            def map_callback(response: obd.OBDResponse):
+                if not response.is_null():
+                    map_val = response.value.magnitude
+                    self.last_map = map_val
+                    # Convert kPa difference to PSI: (MAP - BARO) * 0.1450377
+                    boost_psi = (map_val - self.last_baro) * 0.1450377
+                    self.after(0, self.gauges["BOOST"].update_value, round(boost_psi, 1))
+
+                    if self.is_logging_trip and self.current_trip_id:
+                        self.db_manager.log_reading(self.current_trip_id, "BOOST", round(boost_psi, 1), "PSI")
+                    
+                    # Create mock response object to fit alert check
+                    class BoostResponse:
+                        value = type('Val', (), {'magnitude': boost_psi, 'units': 'PSI'})()
+                        def is_null(self): return False
+                    self.alert_manager.check_value("BOOST", BoostResponse())
+                    self.recalculate_mpg()
+
+            self.connection.watch(obd.commands.INTAKE_PRESSURE, callback=map_callback)
+
+        # --- Custom Fuel Economy (MPG) gauge using Speed-Density fallback ---
+        if self.connection.supports(obd.commands.SPEED) and self.connection.supports(obd.commands.RPM) and self.connection.supports(obd.commands.INTAKE_PRESSURE):
+            gauge = GaugeWidget(self.gauge_container_frame, "Fuel Economy", "MPG")
+            gauge.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            self.gauges["MPG"] = gauge
+            col += 1
+            if col >= max_cols: col, row = 0, row + 1
+
+            # Watch Intake Temp (if supported) to calibrate density
+            try:
+                # Some obd command modules might raise if command not found
+                iat_cmd = getattr(obd.commands, 'INTAKE_TEMP', None) or getattr(obd.commands, 'AMBIENT_AIR_TEMP', None)
+                if iat_cmd and self.connection.supports(iat_cmd):
+                    def iat_callback(response: obd.OBDResponse):
+                        if not response.is_null():
+                            self.last_iat = response.value.magnitude + 273.15  # Celsius to Kelvin
+                    self.connection.watch(iat_cmd, callback=iat_callback)
+            except Exception:
+                pass
+
+    def recalculate_mpg(self):
+        # Fuel Flow formula based on Speed-Density:
+        # Air mass flow (g/s) = (RPM * MAP * Displacement * VE) / (120 * R * IAT)
+        # For Dodge Dart: Displacement = 1.4L, VE ~ 80% (0.80)
+        # Constant = (1.4 * 0.80 * 28.97) / (120 * 8.314) ~ 0.0325
+        rpm = self.last_rpm
+        map_val = self.last_map
+        iat = self.last_iat if self.last_iat > 0 else 308.0
+        speed_kph = self.last_speed
+        speed_mph = speed_kph * 0.621371
+
+        # Air Flow (g/s)
+        est_maf = 0.0325 * (rpm * map_val) / iat
+        # stoichiometry Fuel flow (g/s) = MAF / 14.7
+        # Gallons per Hour (GPH) = (MAF / 14.7) * 3600 (seconds) / 2818 (g/gallon density)
+        # Constant = 3600 / (14.7 * 2818) = 0.0869
+        gph = est_maf * 0.0869
+
+        if gph > 0.05 and speed_mph > 2.0:
+            mpg = speed_mph / gph
+            mpg = min(99.9, max(0.0, mpg))
+        else:
+            mpg = 0.0
+
+        if "MPG" in self.gauges:
+            self.after(0, self.gauges["MPG"].update_value, round(mpg, 1))
+            if self.is_logging_trip and self.current_trip_id:
+                self.db_manager.log_reading(self.current_trip_id, "MPG", round(mpg, 1), "MPG")
+
     def gauge_callback_factory(self, cmd_info: OBDCommand) -> Callable:
         """Creates a callback that updates gauges, logs data, and checks alerts."""
         cmd_name, unit = cmd_info.name, cmd_info.unit
         def callback(response: obd.OBDResponse):
             if not response.is_null():
-                self.after(0, self.gauges[cmd_name].update_value, response.value.magnitude)
+                val = response.value.magnitude
+                self.after(0, self.gauges[cmd_name].update_value, val)
+                
+                # Keep state values updated for MPG calculations
+                if cmd_name == "RPM":
+                    self.last_rpm = val
+                elif cmd_name == "SPEED":
+                    self.last_speed = val
+                    
                 if self.is_logging_trip and self.current_trip_id:
-                    self.db_manager.log_reading(self.current_trip_id, cmd_name, response.value.magnitude, unit)
+                    self.db_manager.log_reading(self.current_trip_id, cmd_name, val, unit)
                 self.alert_manager.check_value(cmd_name, response)
+                self.recalculate_mpg()
         return callback
 
     def _clear_all_gauges(self):
         for cmd_info in self.SUPPORTED_COMMANDS:
             if self.connection and self.connection.is_connected():
                 self.connection.unwatch(cmd_info.cmd)
+        if self.connection and self.connection.is_connected():
+            self.connection.unwatch(obd.commands.INTAKE_PRESSURE)
+            self.connection.unwatch(obd.commands.BAROMETRIC_PRESSURE)
+            try:
+                iat_cmd = getattr(obd.commands, 'INTAKE_TEMP', None) or getattr(obd.commands, 'AMBIENT_AIR_TEMP', None)
+                if iat_cmd:
+                    self.connection.unwatch(iat_cmd)
+            except Exception:
+                pass
         for widget in self.gauge_container_frame.winfo_children():
             widget.destroy()
         self.gauges.clear()
+
+    # --- Background Fault Monitor ---
+    def _background_fault_monitor(self):
+        logger.info("Background Fault Monitor thread started.")
+        while self.is_connected and self.connection:
+            try:
+                # Query diagnostic codes
+                response = self.connection.query(obd.commands.GET_DTC, force=True)
+                if not response.is_null() and response.value:
+                    codes = response.value
+                    alert_msg = "CHECK ENGINE: " + ", ".join([c for c, d in codes])
+                    self.after(0, self.show_alert_banner, alert_msg, "CRITICAL")
+                    
+                    if self.is_logging_trip and self.current_trip_id:
+                        for code, desc in codes:
+                            rule_id = self.db_manager.add_or_get_alert_rule(self.current_vehicle_id, code, desc)
+                            self.db_manager.log_alert(self.current_trip_id, rule_id, code)
+                else:
+                    self.after(0, self.hide_alert_banner)
+            except Exception as e:
+                logger.error(f"Background fault monitor error: {e}")
+                
+            # Sleep 15s in simulator, 300s (5m) in real connection
+            sleep_time = 15 if isinstance(self.connection, MockOBDConnection) else 300
+            for _ in range(sleep_time):
+                if not self.is_connected or not self.connection:
+                    break
+                time.sleep(1)
+        logger.info("Background Fault Monitor thread exited.")
 
     # --- Diagnostics ---
     def read_dtcs(self):

@@ -275,7 +275,7 @@ class FileBrowserPage(ctk.CTkFrame):
                     self.directory_cache = [] # Ensure cache is empty on error
                     self.after(0, lambda: messagebox.showerror("Error", f"Failed to load directory contents:\n{e}", parent=self))
                 finally:
-                    self._update_display() # Always update display, even if cache loading failed
+                    self.after(0, self._update_display) # Always update display on the main UI thread
                     logger.info(f"Navigated to: {self.current_path}")
 
             self.executor.submit(_load_cache).add_done_callback(_on_cache_loaded)

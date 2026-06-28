@@ -9,6 +9,14 @@ import tempfile
 from tkinter import messagebox
 import shutil
 from typing import Tuple
+from voice_recorder import VoiceRecorder
+
+SR_AVAILABLE = False
+try:
+    import speech_recognition as sr
+    SR_AVAILABLE = True
+except ImportError:
+    pass
 
 # --- Conditional Imports and Global Flags ---
 GPIO_AVAILABLE = False
@@ -75,6 +83,8 @@ class AIPage(ctk.CTkFrame):
 
         self._configure_gemini()
         self._load_tts_model()
+        self.recorder = VoiceRecorder()
+        self.is_recording = False
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -105,11 +115,17 @@ class AIPage(ctk.CTkFrame):
         chat_input_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         chat_input_frame.grid_rowconfigure(0, weight=1)
         chat_input_frame.grid_columnconfigure(0, weight=1)
+        chat_input_frame.grid_columnconfigure(1, weight=0)
+
         self.chat_frame = ctk.CTkScrollableFrame(chat_input_frame, fg_color=DARK_BACKGROUND)
-        self.chat_frame.grid(row=0, column=0, sticky="nsew")
+        self.chat_frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
+
         self.entry = ctk.CTkEntry(chat_input_frame, placeholder_text="Ask V.I.N.C.E. a question...", font=("Arial", 12), border_color=PIPBOY_FRAME, fg_color=PIPBOY_FRAME, text_color=TEXT_COLOR_PRIMARY)
-        self.entry.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+        self.entry.grid(row=1, column=0, sticky="ew", padx=(10, 5), pady=10)
         self.entry.bind("<Return>", self._send_message)
+
+        self.record_button = ctk.CTkButton(chat_input_frame, text="🎤 Rec", width=60, fg_color=PIPBOY_FRAME, hover_color="#3a3d3e", text_color=PIPBOY_GREEN, command=self._toggle_voice_recording)
+        self.record_button.grid(row=1, column=1, padx=(5, 10), pady=10, sticky="e")
         
         # Sidebar
         sidebar_frame = ctk.CTkFrame(main_frame, width=150, fg_color=PIPBOY_FRAME)
@@ -234,9 +250,27 @@ class AIPage(ctk.CTkFrame):
         return "\n".join(context_parts)
 
     def _ask_ai(self, query: str):
+        # Fetch live vehicle metrics from active page widgets to inject context
+        car_telemetry = ""
+        if "VehiclePage" in self.controller.pages:
+            vp = self.controller.pages["VehiclePage"]
+            if vp.is_connected:
+                metrics = []
+                for k, widget in vp.gauges.items():
+                    val = widget.value_label.cget("text")
+                    label = widget.description_label.cget("text")
+                    metrics.append(f"{k} ({label}): {val}")
+                
+                # Fetch database active codes if any
+                active_dtcs = []
+                if hasattr(vp, 'current_vehicle_id') and vp.current_vehicle_id:
+                    active_dtcs = vp.db_manager.get_last_active_fault_codes(vp.current_vehicle_id)
+                
+                car_telemetry = f"\n[Car Live Context: {', '.join(metrics)} | Check Engine Codes: {', '.join(active_dtcs) if active_dtcs else 'None'}]"
+
         backend = self.controller.config.get('AI', 'backend', fallback='local')
         context = self._get_conversation_context()
-        full_prompt = f"{self.current_prompt}\n\n{context}\n\nUser: {query}"
+        full_prompt = f"{self.current_prompt}{car_telemetry}\n\n{context}\n\nUser: {query}"
         
         try:
             if backend == 'gemini':
@@ -373,3 +407,76 @@ class AIPage(ctk.CTkFrame):
         # clean_text = "".join(clean_text_parts)
 
         return clean_text.strip(), "\n".join(feedback_messages)
+
+    # --- Voice Recording and STT Implementation ---
+    def _toggle_voice_recording(self):
+        if self.is_thinking:
+            return
+
+        if not self.is_recording:
+            # Start Recording
+            temp_dir = tempfile.gettempdir()
+            self.temp_wav_path = os.path.join(temp_dir, "vince_voice.wav")
+            
+            if self.recorder.start_recording():
+                self.is_recording = True
+                self.record_button.configure(text="🛑 Stop", fg_color="#ff2a5f", hover_color="#b31b3e")
+                self.entry.configure(placeholder_text="Listening to voice input...")
+                threading.Thread(target=self._record_loop, daemon=True).start()
+            else:
+                self._add_message("system", "Failed to access microphone.")
+        else:
+            # Stop Recording
+            self.is_recording = False
+            self.record_button.configure(text="🎤 Rec", fg_color=PIPBOY_FRAME, hover_color="#3a3d3e")
+            self.entry.configure(placeholder_text="Processing voice input...")
+            
+            # Save and trigger transcription
+            if self.recorder.stop_recording(self.temp_wav_path):
+                threading.Thread(target=self._transcribe_audio, args=(self.temp_wav_path,), daemon=True).start()
+            else:
+                self._add_message("system", "Failed to save voice recording.")
+                self.entry.configure(placeholder_text="Ask V.I.N.C.E. a question...")
+
+    def _record_loop(self):
+        while self.is_recording:
+            self.recorder.record_step()
+
+    def _transcribe_audio(self, filepath):
+        if not SR_AVAILABLE:
+            self._add_message("system", "Speech recognition library not available. Typing fallback active.")
+            self.after(0, lambda: self.entry.configure(placeholder_text="Ask V.I.N.C.E. a question..."))
+            return
+
+        logger.info(f"Transcribing audio file: {filepath}")
+        recognizer = sr.Recognizer()
+        try:
+            with sr.AudioFile(filepath) as source:
+                audio_data = recognizer.record(source)
+            
+            # Recognize using Google free API
+            text = recognizer.recognize_google(audio_data)
+            logger.info(f"Transcription result: {text}")
+            
+            # Insert result into entry and submit
+            self.after(0, self._submit_transcription, text)
+        except sr.UnknownValueError:
+            self._add_message("system", "V.I.N.C.E. could not understand the audio.")
+        except sr.RequestError as e:
+            self._add_message("system", f"Speech recognition service error: {e}")
+        except Exception as e:
+            logger.error(f"Speech recognition error: {e}")
+            self._add_message("system", "Failed to transcribe voice.")
+        finally:
+            # Clean up temp file
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+            self.after(0, lambda: self.entry.configure(placeholder_text="Ask V.I.N.C.E. a question..."))
+
+    def _submit_transcription(self, text):
+        self.entry.delete(0, "end")
+        self.entry.insert(0, text)
+        self._send_message()

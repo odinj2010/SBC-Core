@@ -99,8 +99,7 @@ class BrowserPage(ctk.CTkFrame):
         self.browser_frame.open_link = self._on_link_click
 
     def _read_config(self):
-        config = configparser.ConfigParser()
-        config.read('config.ini')
+        config = self.controller.config
         
         home_page = "https://www.google.com" # Default
         search_engine_url = "https://www.google.com/search?q=" # Default

@@ -272,3 +272,35 @@ class VehicleDBManager:
             logger.error(f"Error during database pruning: {e}")
         
         return deleted_trips, deleted_readings
+
+    def add_or_get_alert_rule(self, vehicle_id: int, command: str, description: str) -> int:
+        """Retrieves the ID of an alert rule for a command, or creates one if it doesn't exist."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT id FROM alert_rules WHERE vehicle_id = ? AND command = ?", (vehicle_id, command))
+            row = cursor.fetchone()
+            if row:
+                return row['id']
+            else:
+                cursor.execute(
+                    "INSERT INTO alert_rules (vehicle_id, command, condition, value, severity) VALUES (?, ?, ?, ?, ?)",
+                    (vehicle_id, command, '=', 1.0, 'CRITICAL')
+                )
+                self.conn.commit()
+                return cursor.lastrowid
+        except sqlite3.Error as e:
+            logger.error(f"Error adding/getting alert rule: {e}")
+            return -1
+
+    def get_last_active_fault_codes(self, vehicle_id: int) -> List[str]:
+        """Fetches the last logged fault code codes from database."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT triggered_value FROM alerts JOIN trips ON alerts.trip_id = trips.id "
+                "WHERE trips.vehicle_id = ? ORDER BY alerts.timestamp DESC LIMIT 10", (vehicle_id,)
+            )
+            return [row['triggered_value'] for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Error getting active codes: {e}")
+            return []

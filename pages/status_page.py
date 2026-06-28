@@ -174,6 +174,8 @@ class StatusPage(ctk.CTkFrame):
             self.controller.active_toplevel.focus()
 
     def update_all_info(self):
+        if self.after_id:
+            self.after_cancel(self.after_id)
         self.update_dynamic_info()
         self.update_graphs()
         self.after_id = self.after(UPDATE_INTERVAL_MS, self.update_all_info)
