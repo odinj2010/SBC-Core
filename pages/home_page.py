@@ -112,6 +112,7 @@ class HomePage(ctk.CTkFrame):
             ("Vehicle Interface", "VehiclePage", os.path.join(icon_path, "vehicle.png")),
             ("Network Scanner", "NetworkPage", os.path.join(icon_path, "network.png")),
             ("Secure Comms", "CommsPage", os.path.join(icon_path, "comms.png")),
+            ("Games", "GamesPage", os.path.join(icon_path, "games.png")),
             ("Settings", "SettingsPage", os.path.join(icon_path, "settings.png"))
         ]
 

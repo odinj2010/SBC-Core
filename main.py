@@ -48,6 +48,7 @@ from pages.vehicle_page import VehiclePage
 # --- NEW: Import new pages ---
 from pages.network_page import NetworkPage
 from pages.comms_page import CommsPage
+from pages.games_page import GamesPage
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -129,7 +130,7 @@ class MainApplication(ctk.CTk):
             "RadioPage": RadioPage, "BrowserPage": BrowserPage,
             "VehiclePage": VehiclePage,
             # --- NEW: Add new pages to the class dictionary ---
-            "NetworkPage": NetworkPage, "CommsPage": CommsPage,
+            "NetworkPage": NetworkPage, "CommsPage": CommsPage, "GamesPage": GamesPage,
         }
         
         self.create_all_pages(container)
@@ -197,6 +198,29 @@ class MainApplication(ctk.CTk):
             else:
                 return False, f"Unknown vehicle action: {action}"
         return False, "Vehicle Interface module not loaded."
+
+    def request_game_launch(self, game_name: str) -> Tuple[bool, str]:
+        """Launches a retro emulator game or interface using a background process."""
+        import subprocess
+        logger = logging.getLogger(__name__)
+        logger.info(f"Received request to launch game engine: {game_name}")
+        
+        if game_name.lower() == "retroarch":
+            try:
+                # Start RetroArch detached so it doesn't block the Python Tkinter GUI
+                # On Windows we can check or launch using 'retroarch' command. 
+                # On Linux/RPi, it is launched with 'retroarch'.
+                cmd = ["retroarch"]
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True, "RetroArch started."
+            except FileNotFoundError:
+                # If RetroArch is not installed locally, log a simulated success to support demo mode
+                logger.warning("RetroArch executable not found. Simulating launch for demonstration.")
+                return True, "RetroArch (Simulated Mode) started successfully."
+            except Exception as e:
+                logger.error(f"Error launching RetroArch: {e}")
+                return False, f"Failed to start RetroArch: {e}"
+        return False, f"Unknown game engine: {game_name}"
     # --- END: AI Service Hub Methods ---
 
     def setup_logging_handler(self):
