@@ -269,8 +269,18 @@ class AIPage(ctk.CTkFrame):
                 car_telemetry = f"\n[Car Live Context: {', '.join(metrics)} | Check Engine Codes: {', '.join(active_dtcs) if active_dtcs else 'None'}]"
 
         backend = self.controller.config.get('AI', 'backend', fallback='local')
-        context = self._get_conversation_context()
-        full_prompt = f"{self.current_prompt}{car_telemetry}\n\n{context}\n\nUser: {query}"
+        
+        if backend == 'local':
+            # Construct using ChatML format for local instruction models (Qwen2.5/Llama)
+            templated_prompt = f"<|im_start|>system\n{self.current_prompt}{car_telemetry}<|im_end|>\n"
+            for entry in self.chat_history[-6:]:  # Use last 3 turns (6 entries)
+                role_name = "user" if entry["role"] == "user" else "assistant"
+                templated_prompt += f"<|im_start|>{role_name}\n{entry['content']}<|im_end|>\n"
+            templated_prompt += f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
+            full_prompt = templated_prompt
+        else:
+            context = self._get_conversation_context()
+            full_prompt = f"{self.current_prompt}{car_telemetry}\n\n{context}\n\nUser: {query}"
         
         try:
             if backend == 'gemini':
@@ -279,7 +289,12 @@ class AIPage(ctk.CTkFrame):
                 for chunk in response: self.response_queue.put(chunk.text)
             else: # local
                 if self.llm is None: raise ValueError("Local LLM not loaded.")
-                stream = self.llm(full_prompt, max_tokens=1024, stop=["\nUser:"], stream=True)
+                stream = self.llm(
+                    full_prompt, 
+                    max_tokens=1024, 
+                    stop=["<|im_end|>", "<|im_start|>", "\nUser:", "\nassistant:", "\nsystem:"], 
+                    stream=True
+                )
                 for output in stream: self.response_queue.put(output["choices"][0]["text"])
         except Exception as e:
             logger.error(f"Error with AI backend: {e}")
