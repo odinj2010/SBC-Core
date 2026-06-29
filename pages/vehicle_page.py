@@ -781,20 +781,32 @@ class VehiclePage(ctk.CTkFrame):
             self._stop_log_updater()
 
     def update_log_display(self):
-        if not self.is_logging_trip or not self.current_trip_id: return
+        logger.info("Entering update_log_display...")
+        if not self.is_logging_trip or not self.current_trip_id:
+            logger.info("update_log_display aborted: not logging or no current trip.")
+            return
+        logger.info("Calling db_manager.get_trip_readings...")
         readings = self.db_manager.get_trip_readings(self.current_trip_id)
+        logger.info(f"Retrieved {len(readings)} readings from DB.")
         
+        logger.info("Configuring log_textbox state...")
         self.log_textbox.configure(state="normal")
+        logger.info("Deleting log_textbox content...")
         self.log_textbox.delete("1.0", "end")
         header = f"{'Timestamp':<22}{'Command':<15}{'Value':<15}{'Unit':<10}\n"
+        logger.info("Inserting header into log_textbox...")
         self.log_textbox.insert("1.0", header, ("header",))
+        logger.info("Configuring header tag in log_textbox...")
         self.log_textbox.tag_config("header", font=("Monaco", 10, "bold"))
 
+        logger.info("Inserting readings into log_textbox...")
         for r in readings:
             ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r['timestamp']))
             line = f"{ts:<22}{r['command']:<15}{r['value']:<15}{(r['unit'] if r['unit'] is not None else ''):<10}\n"
             self.log_textbox.insert("end", line)
+        logger.info("Disabling log_textbox state...")
         self.log_textbox.configure(state="disabled")
+        logger.info("Leaving update_log_display.")
 
     def export_trip(self):
         if not self.current_trip_id: return
