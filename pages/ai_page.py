@@ -194,8 +194,9 @@ class AIPage(ctk.CTkFrame):
                     sound_file_path = temp_audio_file.name
                 
                 logger.info(f"[TTS] Synthesizing: {text_to_speak!r}")
-                with open(sound_file_path, "wb") as f:
-                    self._piper_voice.synthesize(text_to_speak, f)
+                import wave
+                with wave.open(sound_file_path, "wb") as wav_file:
+                    self._piper_voice.synthesize_wav(text_to_speak, wav_file)
                 logger.info("[TTS] Synthesis completed. Prepending silence for HDMI wake-up...")
                 
                 # Prepend 0.8s of silence to allow HDMI receiver to wake up
