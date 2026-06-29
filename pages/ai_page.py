@@ -196,8 +196,26 @@ class AIPage(ctk.CTkFrame):
                 logger.info(f"[TTS] Synthesizing: {text_to_speak!r}")
                 with open(sound_file_path, "wb") as f:
                     self._piper_voice.synthesize(text_to_speak, f)
-                logger.info("[TTS] Synthesis completed. Sending playback request...")
+                logger.info("[TTS] Synthesis completed. Prepending silence for HDMI wake-up...")
                 
+                # Prepend 0.8s of silence to allow HDMI receiver to wake up
+                import wave
+                try:
+                    with wave.open(sound_file_path, 'rb') as w_in:
+                        params = w_in.getparams()
+                        nchannels, sampwidth, framerate, nframes, comptype, compname = params
+                        frames = w_in.readframes(nframes)
+                    
+                    silent_frames_count = int(framerate * 0.8)
+                    silence = b'\x00' * (silent_frames_count * nchannels * sampwidth)
+                    
+                    with wave.open(sound_file_path, 'wb') as w_out:
+                        w_out.setparams(params)
+                        w_out.writeframes(silence + frames)
+                    logger.info("[TTS] Silence prepended successfully.")
+                except Exception as ex:
+                    logger.error(f"[TTS] Failed to prepend silence: {ex}")
+
                 # Delegate playback to the main controller
                 self.controller.radio_play_tts(sound_file_path)
                 logger.info("[TTS] Playback request sent.")
