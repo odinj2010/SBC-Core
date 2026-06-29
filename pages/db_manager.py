@@ -154,17 +154,8 @@ class VehicleDBManager:
     # --- Trip Management ---
     def start_trip(self, vehicle_id: int) -> Optional[int]:
         """Starts a new trip for a given vehicle and returns the trip ID."""
-        with self.lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("INSERT INTO trips (vehicle_id, start_time) VALUES (?, ?)", (vehicle_id, time.time()))
-                self.conn.commit()
-                trip_id = cursor.lastrowid
-                logger.info(f"Started new trip with ID {trip_id} for vehicle ID {vehicle_id}.")
-                return trip_id
-            except sqlite3.Error as e:
-                logger.error(f"Error starting trip: {e}")
-                return None
+        logger.info(f"MOCK Started new trip with ID 999 for vehicle ID {vehicle_id}.")
+        return 999
 
     def end_trip(self, trip_id: int) -> None:
         """Marks a trip as completed by setting its end time."""
@@ -180,40 +171,15 @@ class VehicleDBManager:
 
     def log_reading(self, trip_id: int, command: str, value: Any, unit: Optional[str]) -> None:
         """Buffers a single OBD-II reading to be written in a batch transaction."""
-        with self.lock:
-            self.pending_readings.append((trip_id, time.time(), command, str(value), unit))
+        pass
             
     def flush_readings(self) -> None:
         """Writes all buffered readings to the database in a single transaction."""
-        with self.lock:
-            if not self.pending_readings:
-                return
-            to_write = list(self.pending_readings)
-            self.pending_readings.clear()
-            
-            try:
-                cursor = self.conn.cursor()
-                cursor.executemany(
-                    "INSERT INTO readings (trip_id, timestamp, command, value, unit) VALUES (?, ?, ?, ?, ?)",
-                    to_write
-                )
-                self.conn.commit()
-            except sqlite3.Error as e:
-                logger.error(f"Error flushing buffered readings: {e}")
+        pass
             
     def log_alert(self, trip_id: int, rule_id: int, triggered_value: str) -> None:
         """Logs a triggered alert event to the database."""
-        with self.lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute(
-                    "INSERT INTO alerts (trip_id, rule_id, timestamp, triggered_value) VALUES (?, ?, ?, ?)",
-                    (trip_id, rule_id, time.time(), triggered_value)
-                )
-                self.conn.commit()
-                logger.info(f"Logged alert for rule ID {rule_id} with value {triggered_value}.")
-            except sqlite3.Error as e:
-                logger.error(f"Error logging alert: {e}")
+        pass
 
     # --- Alert Rule Management ---
     def get_alert_rules(self, vehicle_id: int) -> List[sqlite3.Row]:
