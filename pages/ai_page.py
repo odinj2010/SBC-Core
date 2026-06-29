@@ -214,7 +214,7 @@ class AIPage(ctk.CTkFrame):
                         w_out.writeframes(silence + frames)
                     logger.info("[TTS] Silence prepended successfully.")
                 except Exception as ex:
-                    logger.error(f"[TTS] Failed to prepend silence: {ex}")
+                    logger.error(f"[TTS] Failed to prepend silence: {ex}", exc_info=True)
 
                 # Delegate playback to the main controller
                 self.controller.radio_play_tts(sound_file_path)
