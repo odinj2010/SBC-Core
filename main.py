@@ -97,6 +97,18 @@ class MainApplication(ctk.CTk):
         self.config = configparser.ConfigParser()
         self.config_path = os.path.join(self.app_dir, 'config.ini')
         self.config.read(self.config_path)
+
+        # Read Display Settings
+        fullscreen = False
+        if self.config.has_section('Display'):
+            fullscreen = self.config.getboolean('Display', 'fullscreen', fallback=False)
+        
+        if fullscreen:
+            self.attributes('-fullscreen', True)
+        
+        # Bind F11 and Escape to toggle/exit fullscreen mode for debugging
+        self.bind("<F11>", self.toggle_fullscreen)
+        self.bind("<Escape>", self.exit_fullscreen)
         
         # Variables to hold all current track info
         self.vlc_instance: Optional[vlc.Instance] = None
@@ -242,6 +254,15 @@ class MainApplication(ctk.CTk):
         if hasattr(page_to_show, 'on_show'):
             page_to_show.on_show()
         page_to_show.tkraise()
+
+    def toggle_fullscreen(self, event=None):
+        is_fullscreen = self.attributes('-fullscreen')
+        self.attributes('-fullscreen', not is_fullscreen)
+        return "break"
+
+    def exit_fullscreen(self, event=None):
+        self.attributes('-fullscreen', False)
+        return "break"
 
     def save_config(self):
         try:
