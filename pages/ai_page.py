@@ -265,7 +265,7 @@ class AIPage(ctk.CTkFrame):
         self._add_message("ai", "", is_stream=True)
         self._full_response_text = ""
         self.is_thinking = True
-        self.entry.configure(state="disabled", placeholder_text="V.I.N.C.E. is thinking...")
+        self.entry.configure(state="disabled")
         threading.Thread(target=self._ask_ai, args=(query, car_telemetry), daemon=True).start()
 
     def _get_conversation_context(self, num_turns: int = 3) -> str:
@@ -320,7 +320,7 @@ class AIPage(ctk.CTkFrame):
                         self._handle_response_completion(self._full_response_text)
                         self.chat_history.append({"role": "model", "content": self._full_response_text})
                         self.is_thinking = False
-                        self.entry.configure(state="normal", placeholder_text="Ask V.I.N.C.E. a question...")
+                        self.entry.configure(state="normal")
                         self.entry.update()
                         self.entry.focus()
                         self._full_response_text = ""
@@ -334,7 +334,7 @@ class AIPage(ctk.CTkFrame):
                     logger.error(f"Error processing response chunk: {e}")
                     if chunk is None:
                         self.is_thinking = False
-                        self.entry.configure(state="normal", placeholder_text="Ask V.I.N.C.E. a question...")
+                        self.entry.configure(state="normal")
                         self.entry.update()
                         self.entry.focus()
                         self._full_response_text = ""
