@@ -774,6 +774,7 @@ class VehiclePage(ctk.CTkFrame):
     def _live_log_update(self):
         """The recurring method that calls the log display update and reschedules itself."""
         if self.is_logging_trip:
+            self.db_manager.flush_readings()
             self.update_log_display()
             self.log_update_job = self.after(LOG_UPDATE_INTERVAL_MS, self._live_log_update)
         else:

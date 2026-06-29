@@ -26,7 +26,8 @@ class VehicleDBManager:
             db_path: The file path for the SQLite database.
         """
         self.db_path = db_path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.pending_readings = []
         # The connection is initialized with check_same_thread=False to allow
         # database writes from background threads (e.g., the OBD polling thread).
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -114,6 +115,10 @@ class VehicleDBManager:
     def close(self) -> None:
         """Closes the database connection gracefully."""
         if self.conn:
+            try:
+                self.flush_readings()
+            except Exception:
+                pass
             self.conn.close()
             logger.info("Database connection closed.")
 
@@ -164,6 +169,7 @@ class VehicleDBManager:
     def end_trip(self, trip_id: int) -> None:
         """Marks a trip as completed by setting its end time."""
         with self.lock:
+            self.flush_readings()
             try:
                 cursor = self.conn.cursor()
                 cursor.execute("UPDATE trips SET end_time = ? WHERE id = ?", (time.time(), trip_id))
@@ -172,21 +178,28 @@ class VehicleDBManager:
             except sqlite3.Error as e:
                 logger.error(f"Error ending trip: {e}")
 
-    # --- Data and Alert Logging ---
     def log_reading(self, trip_id: int, command: str, value: Any, unit: Optional[str]) -> None:
-        """Logs a single OBD-II reading to the database."""
+        """Buffers a single OBD-II reading to be written in a batch transaction."""
         with self.lock:
+            self.pending_readings.append((trip_id, time.time(), command, str(value), unit))
+            
+    def flush_readings(self) -> None:
+        """Writes all buffered readings to the database in a single transaction."""
+        with self.lock:
+            if not self.pending_readings:
+                return
+            to_write = list(self.pending_readings)
+            self.pending_readings.clear()
+            
             try:
                 cursor = self.conn.cursor()
-                cursor.execute(
+                cursor.executemany(
                     "INSERT INTO readings (trip_id, timestamp, command, value, unit) VALUES (?, ?, ?, ?, ?)",
-                    (trip_id, time.time(), command, str(value), unit)
+                    to_write
                 )
                 self.conn.commit()
             except sqlite3.Error as e:
-                # Avoid flooding logs for this common operation.
-                # logger.debug(f"Error logging reading: {e}")
-                pass
+                logger.error(f"Error flushing buffered readings: {e}")
             
     def log_alert(self, trip_id: int, rule_id: int, triggered_value: str) -> None:
         """Logs a triggered alert event to the database."""
