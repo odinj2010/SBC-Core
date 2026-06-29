@@ -309,6 +309,7 @@ class AIPage(ctk.CTkFrame):
         try:
             while not self.response_queue.empty():
                 chunk = self.response_queue.get_nowait()
+                logger.info(f"[QUEUE CHUNK] {chunk!r}")
                 try:
                     if chunk is None: # End of stream
                         self._handle_response_completion(self._full_response_text)
