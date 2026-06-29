@@ -792,7 +792,7 @@ class VehiclePage(ctk.CTkFrame):
 
         for r in readings:
             ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r['timestamp']))
-            line = f"{ts:<22}{r['command']:<15}{r['value']:<15}{r.get('unit', ''):<10}\n"
+            line = f"{ts:<22}{r['command']:<15}{r['value']:<15}{(r['unit'] if r['unit'] is not None else ''):<10}\n"
             self.log_textbox.insert("end", line)
         self.log_textbox.configure(state="disabled")
 
