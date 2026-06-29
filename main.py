@@ -75,7 +75,7 @@ def load_local_llm(config, app_dir):
         return None
     try:
         logging.info(f"Loading local AI model from: {model_path}")
-        llm_instance = Llama(model_path=model_path, n_ctx=4096, n_gpu_layers=0, verbose=False)
+        llm_instance = Llama(model_path=model_path, n_ctx=4096, n_gpu_layers=0, n_threads=3, verbose=False)
         logging.info("Local AI model loaded successfully!")
         return llm_instance
     except Exception as e:
