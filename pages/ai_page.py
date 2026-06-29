@@ -321,6 +321,8 @@ class AIPage(ctk.CTkFrame):
                         self.chat_history.append({"role": "model", "content": self._full_response_text})
                         self.is_thinking = False
                         self.entry.configure(state="normal", placeholder_text="Ask V.I.N.C.E. a question...")
+                        self.entry.update()
+                        self.entry.focus()
                         self._full_response_text = ""
                         self._current_ai_bubble_label = None
                     elif self._current_ai_bubble_label and self._current_ai_bubble_label.winfo_exists():
@@ -333,6 +335,8 @@ class AIPage(ctk.CTkFrame):
                     if chunk is None:
                         self.is_thinking = False
                         self.entry.configure(state="normal", placeholder_text="Ask V.I.N.C.E. a question...")
+                        self.entry.update()
+                        self.entry.focus()
                         self._full_response_text = ""
                         self._current_ai_bubble_label = None
         except queue.Empty:
