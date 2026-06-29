@@ -306,27 +306,26 @@ class AIPage(ctk.CTkFrame):
         try:
             while not self.response_queue.empty():
                 chunk = self.response_queue.get_nowait()
-                if chunk is None: # End of stream
-                    try:
-                        # --- NEW: Centralized end-of-stream processing ---
+                try:
+                    if chunk is None: # End of stream
                         self._handle_response_completion(self._full_response_text)
-                        
                         self.chat_history.append({"role": "model", "content": self._full_response_text})
-                    except Exception as e:
-                        logger.error(f"Error during AI response completion: {e}")
-                        self._add_message("system", f"Error processing AI response: {e}")
-                    finally:
                         self.is_thinking = False
                         self.entry.configure(state="normal", placeholder_text="Ask V.I.N.C.E. a question...")
                         self._full_response_text = ""
                         self._current_ai_bubble_label = None
-                elif self._current_ai_bubble_label:
-                    # Clean the chunk: remove any leading "V.I.N.C.E.:" or similar phrases
-                    cleaned_chunk = chunk # No longer stripping prefixes, assuming fine-tuned model won't generate them
-                    
-                    current_text = self._current_ai_bubble_label.cget("text")
-                    self._current_ai_bubble_label.configure(text=current_text + cleaned_chunk)
-                    self._full_response_text += cleaned_chunk
+                    elif self._current_ai_bubble_label and self._current_ai_bubble_label.winfo_exists():
+                        cleaned_chunk = chunk
+                        current_text = self._current_ai_bubble_label.cget("text")
+                        self._current_ai_bubble_label.configure(text=current_text + cleaned_chunk)
+                        self._full_response_text += cleaned_chunk
+                except Exception as e:
+                    logger.error(f"Error processing response chunk: {e}")
+                    if chunk is None:
+                        self.is_thinking = False
+                        self.entry.configure(state="normal", placeholder_text="Ask V.I.N.C.E. a question...")
+                        self._full_response_text = ""
+                        self._current_ai_bubble_label = None
         except queue.Empty:
             pass
         finally:
