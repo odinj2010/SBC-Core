@@ -223,7 +223,14 @@ class MainApplication(ctk.CTk):
                 # On Windows we can check or launch using 'retroarch' command. 
                 # On Linux/RPi, it is launched with 'retroarch'.
                 cmd = ["retroarch"]
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                def monitor_process():
+                    proc.wait()
+                    # Once emulator exits, bring the dashboard back to the front and regain active focus
+                    self.after(0, lambda: (self.focus_force(), self.lift()))
+                
+                threading.Thread(target=monitor_process, daemon=True).start()
                 return True, "RetroArch started."
             except FileNotFoundError:
                 # If RetroArch is not installed locally, log a simulated success to support demo mode

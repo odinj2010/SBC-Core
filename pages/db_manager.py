@@ -32,6 +32,11 @@ class VehicleDBManager:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         # Using sqlite3.Row as the row_factory allows accessing columns by name.
         self.conn.row_factory = sqlite3.Row
+        try:
+            self.conn.execute('PRAGMA journal_mode=WAL;')
+            self.conn.execute('PRAGMA synchronous=NORMAL;')
+        except sqlite3.Error as e:
+            logger.warning(f"Failed to enable SQLite WAL optimizations: {e}")
         logger.info(f"Database connection established at {self.db_path}")
         self._create_tables()
 

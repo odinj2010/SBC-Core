@@ -138,11 +138,13 @@ class FileBrowserPage(ctk.CTkFrame):
         self.sort_criterion = tk.StringVar(value="Name")
         self.sort_order = tk.StringVar(value="Ascending")
 
+        self.action_queue = queue.Queue()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.folder_icon, self.file_icon, self.script_icon = None, None, None
 
         self._setup_layout()
         self.load_icons()
+        self._process_action_queue()
         self.navigate(self.current_path)
 
     def _setup_layout(self):
@@ -240,6 +242,20 @@ class FileBrowserPage(ctk.CTkFrame):
                 # Add the current directory as a non-clickable label
                 ctk.CTkLabel(self.breadcrumb_frame, text=display_text, font=APP_FONT, text_color="white").pack(side="left")
 
+    def _process_action_queue(self):
+        try:
+            while not self.action_queue.empty():
+                callback = self.action_queue.get_nowait()
+                try:
+                    callback()
+                except Exception as e:
+                    logger.error(f"Error executing queued action: {e}")
+        except queue.Empty:
+            pass
+        finally:
+            if self.winfo_exists():
+                self.after(100, self._process_action_queue)
+
     def navigate(self, path: Path):
         try:
             resolved_path = path.resolve()
@@ -262,7 +278,7 @@ class FileBrowserPage(ctk.CTkFrame):
                             except FileNotFoundError:
                                 continue # File deleted during scan
                 except PermissionError:
-                    self.after(0, lambda: messagebox.showerror("Permission Denied", f"Cannot access directory:\n{path}", parent=self))
+                    self.action_queue.put(lambda: messagebox.showerror("Permission Denied", f"Cannot access directory:\n{path}", parent=self))
                     return []
                 return temp_cache
 
@@ -273,9 +289,9 @@ class FileBrowserPage(ctk.CTkFrame):
                 except Exception as e:
                     logger.error(f"Error loading cache for {self.current_path}: {e}")
                     self.directory_cache = [] # Ensure cache is empty on error
-                    self.after(0, lambda: messagebox.showerror("Error", f"Failed to load directory contents:\n{e}", parent=self))
+                    self.action_queue.put(lambda: messagebox.showerror("Error", f"Failed to load directory contents:\n{e}", parent=self))
                 finally:
-                    self.after(0, self._update_display) # Always update display on the main UI thread
+                    self.action_queue.put(self._update_display) # Always update display on the main UI thread
                     logger.info(f"Navigated to: {self.current_path}")
 
             self.executor.submit(_load_cache).add_done_callback(_on_cache_loaded)

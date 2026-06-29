@@ -476,8 +476,8 @@ class AIPage(ctk.CTkFrame):
             with sr.AudioFile(filepath) as source:
                 audio_data = recognizer.record(source)
             
-            # Recognize using Google free API
-            text = recognizer.recognize_google(audio_data)
+            # Recognize using Google free API with a timeout for vehicle network safety
+            text = recognizer.recognize_google(audio_data, timeout=5)
             logger.info(f"Transcription result: {text}")
             
             # Insert result into entry and submit
