@@ -260,17 +260,17 @@ class AlertManager:
         """Handles a triggered alert: updates UI and logs to DB."""
         logger.warning(f"ALERT TRIGGERED: {rule['command']} {rule['condition']} {rule['value']}. Current value: {response.value}")
         self.page.db_manager.log_alert(self.page.current_trip_id, rule['id'], str(response.value))
-        self.page.show_alert_banner(f"ALERT: {rule['command']} is {response.value.magnitude:.1f} {response.value.units}!", rule['severity'])
+        self.page.after(0, self.page.show_alert_banner, f"ALERT: {rule['command']} is {response.value.magnitude:.1f} {response.value.units}!", rule['severity'])
 
     def clear_alert(self, rule: sqlite3.Row) -> None:
         """Handles a cleared alert."""
         logger.info(f"Alert Cleared: {rule['command']}")
-        self.page.hide_alert_banner()
+        self.page.after(0, self.page.hide_alert_banner)
 
     def reset(self) -> None:
         """Resets active alerts, typically on disconnect or trip end."""
         self.active_alerts.clear()
-        self.page.hide_alert_banner()
+        self.page.after(0, self.page.hide_alert_banner)
 
 class VehiclePage(ctk.CTkFrame):
     def __init__(self, parent: ctk.CTkFrame, controller: Any):
@@ -532,8 +532,17 @@ class VehiclePage(ctk.CTkFrame):
             if not self.connection.is_connected():
                 raise ConnectionError("Failed to connect after start().")
             
+            # Fetch VIN in the background to prevent main GUI thread freeze
+            vin = None
+            try:
+                vin_resp = self.connection.query(obd.commands.VIN)
+                if not vin_resp.is_null() and vin_resp.value:
+                    vin = vin_resp.value
+            except Exception as ve:
+                logger.error(f"Failed to query VIN in background: {ve}")
+
             self.is_connected = True
-            self.after(0, self.on_successful_connection)
+            self.after(0, self.on_successful_connection, vin)
         except Exception as e:
             logger.error(f"OBD connection failed: {e}", exc_info=True)
             self.after(0, lambda: messagebox.showerror("Connection Error", f"Failed: {e}", parent=self))
@@ -541,12 +550,9 @@ class VehiclePage(ctk.CTkFrame):
             self.is_connecting = False
             self.after(0, self._update_ui_state)
 
-    def on_successful_connection(self):
+    def on_successful_connection(self, vin: Optional[str]):
         """Called on the main thread after a connection is established."""
-        # Attempt to get VIN to identify vehicle
-        vin_resp = self.connection.query(obd.commands.VIN)
-        if not vin_resp.is_null() and vin_resp.value:
-            vin = vin_resp.value
+        if vin:
             vehicle_id = self.db_manager.add_or_get_vehicle(vin, f"Vehicle-{vin[-4:]}")
             self.load_vehicle_profiles()
             vehicle = next((v for v in self.vehicles if v['id'] == vehicle_id), None)
