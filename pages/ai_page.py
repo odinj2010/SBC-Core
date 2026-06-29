@@ -377,16 +377,24 @@ class AIPage(ctk.CTkFrame):
         clean_text = text
         feedback_messages = []
 
+        ALLOWED_COMMANDS = {"execute_gpio_command", "execute_gpio_pulse", "query_system_status", "run_vehicle_diagnostics"}
+
         for match in matches:
             full_tag = match.group(0)
-            command_str = match.group(1)
+            command_str = match.group(1).strip()
             clean_text = clean_text.replace(full_tag, "") # Remove the tag from the text
             
             parts = command_str.split()
+            if not parts:
+                continue
             command_name = parts[0]
             
+            if command_name not in ALLOWED_COMMANDS:
+                # Silently ignore template tags like im_start/im_end/eot_id
+                continue
+            
             # Simple attribute parser (e.g., pin="23")
-            args = {key: val.strip('"') for key, val in (part.split('=') for part in parts[1:])}
+            args = {key: val.strip('"') for key, val in (part.split('=') for part in parts[1:] if '=' in part)}
 
             success = False
             message = "Unknown command."
