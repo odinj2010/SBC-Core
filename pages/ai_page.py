@@ -236,11 +236,32 @@ class AIPage(ctk.CTkFrame):
             self._set_mode(query.lower().replace("/", ""))
             return
 
+        # Fetch live vehicle metrics from active page widgets to inject context (SAFELY on main thread)
+        car_telemetry = ""
+        if "VehiclePage" in self.controller.pages:
+            vp = self.controller.pages["VehiclePage"]
+            if vp.is_connected:
+                metrics = []
+                for k, widget in vp.gauges.items():
+                    try:
+                        val = widget.value_label.cget("text")
+                        label = widget.description_label.cget("text")
+                        metrics.append(f"{k} ({label}): {val}")
+                    except Exception:
+                        pass
+                
+                # Fetch database active codes if any
+                active_dtcs = []
+                if hasattr(vp, 'current_vehicle_id') and vp.current_vehicle_id:
+                    active_dtcs = vp.db_manager.get_last_active_fault_codes(vp.current_vehicle_id)
+                
+                car_telemetry = f"\n[Car Live Context: {', '.join(metrics)} | Check Engine Codes: {', '.join(active_dtcs) if active_dtcs else 'None'}]"
+        
         self._add_message("ai", "", is_stream=True)
         self._full_response_text = ""
         self.is_thinking = True
         self.entry.configure(state="disabled", placeholder_text="V.I.N.C.E. is thinking...")
-        threading.Thread(target=self._ask_ai, args=(query,), daemon=True).start()
+        threading.Thread(target=self._ask_ai, args=(query, car_telemetry), daemon=True).start()
 
     def _get_conversation_context(self, num_turns: int = 3) -> str:
         context_parts = []
@@ -249,40 +270,22 @@ class AIPage(ctk.CTkFrame):
             context_parts.append(f"{role}: {entry['content']}")
         return "\n".join(context_parts)
 
-    def _ask_ai(self, query: str):
-        # Fetch live vehicle metrics from active page widgets to inject context
-        car_telemetry = ""
-        if "VehiclePage" in self.controller.pages:
-            vp = self.controller.pages["VehiclePage"]
-            if vp.is_connected:
-                metrics = []
-                for k, widget in vp.gauges.items():
-                    val = widget.value_label.cget("text")
-                    label = widget.description_label.cget("text")
-                    metrics.append(f"{k} ({label}): {val}")
-                
-                # Fetch database active codes if any
-                active_dtcs = []
-                if hasattr(vp, 'current_vehicle_id') and vp.current_vehicle_id:
-                    active_dtcs = vp.db_manager.get_last_active_fault_codes(vp.current_vehicle_id)
-                
-                car_telemetry = f"\n[Car Live Context: {', '.join(metrics)} | Check Engine Codes: {', '.join(active_dtcs) if active_dtcs else 'None'}]"
-
-        backend = self.controller.config.get('AI', 'backend', fallback='local')
-        
-        if backend == 'local':
-            # Construct using ChatML format for local instruction models (Qwen2.5/Llama)
-            templated_prompt = f"<|im_start|>system\n{self.current_prompt}{car_telemetry}<|im_end|>\n"
-            for entry in self.chat_history[-6:]:  # Use last 3 turns (6 entries)
-                role_name = "user" if entry["role"] == "user" else "assistant"
-                templated_prompt += f"<|im_start|>{role_name}\n{entry['content']}<|im_end|>\n"
-            templated_prompt += f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
-            full_prompt = templated_prompt
-        else:
-            context = self._get_conversation_context()
-            full_prompt = f"{self.current_prompt}{car_telemetry}\n\n{context}\n\nUser: {query}"
-        
+    def _ask_ai(self, query: str, car_telemetry: str):
         try:
+            backend = self.controller.config.get('AI', 'backend', fallback='local')
+            
+            if backend == 'local':
+                # Construct using ChatML format for local instruction models (Qwen2.5/Llama)
+                templated_prompt = f"<|im_start|>system\n{self.current_prompt}{car_telemetry}<|im_end|>\n"
+                for entry in self.chat_history[-6:]:  # Use last 3 turns (6 entries)
+                    role_name = "user" if entry["role"] == "user" else "assistant"
+                    templated_prompt += f"<|im_start|>{role_name}\n{entry['content']}<|im_end|>\n"
+                templated_prompt += f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
+                full_prompt = templated_prompt
+            else:
+                context = self._get_conversation_context()
+                full_prompt = f"{self.current_prompt}{car_telemetry}\n\n{context}\n\nUser: {query}"
+            
             if backend == 'gemini':
                 model = genai.GenerativeModel('gemini-pro')
                 response = model.generate_content(full_prompt, stream=True)
