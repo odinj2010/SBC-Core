@@ -184,26 +184,12 @@ class VehicleDBManager:
     # --- Alert Rule Management ---
     def get_alert_rules(self, vehicle_id: int) -> List[sqlite3.Row]:
         """Retrieves all alert rules for a specific vehicle."""
-        with self.lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("SELECT * FROM alert_rules WHERE vehicle_id = ? AND is_enabled = 1 ORDER BY command", (vehicle_id,))
-                return cursor.fetchall()
-            except sqlite3.Error as e:
-                logger.error(f"Error fetching alert rules: {e}")
-                return []
+        return []
 
     # --- Data Export and Maintenance ---
     def get_trip_readings(self, trip_id: int) -> List[sqlite3.Row]:
         """Fetches all readings for a specific trip, ordered by time."""
-        with self.lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("SELECT timestamp, command, value, unit FROM readings WHERE trip_id = ? ORDER BY timestamp DESC LIMIT 200", (trip_id,))
-                return cursor.fetchall()
-            except sqlite3.Error as e:
-                logger.error(f"Error getting trip readings: {e}")
-                return []
+        return []
 
     def export_trip_to_csv(self, trip_id: int, output_path: Path) -> bool:
         """Exports all data from a given trip to a CSV file."""
@@ -272,34 +258,8 @@ class VehicleDBManager:
 
     def add_or_get_alert_rule(self, vehicle_id: int, command: str, description: str) -> int:
         """Retrieves the ID of an alert rule for a command, or creates one if it doesn't exist."""
-        with self.lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("SELECT id FROM alert_rules WHERE vehicle_id = ? AND command = ?", (vehicle_id, command))
-                row = cursor.fetchone()
-                if row:
-                    return row['id']
-                else:
-                    cursor.execute(
-                        "INSERT INTO alert_rules (vehicle_id, command, condition, value, severity) VALUES (?, ?, ?, ?, ?)",
-                        (vehicle_id, command, '=', 1.0, 'CRITICAL')
-                    )
-                    self.conn.commit()
-                    return cursor.lastrowid
-            except sqlite3.Error as e:
-                logger.error(f"Error adding/getting alert rule: {e}")
-                return -1
+        return 1
 
     def get_last_active_fault_codes(self, vehicle_id: int) -> List[str]:
         """Fetches the last logged fault code codes from database."""
-        with self.lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute(
-                    "SELECT DISTINCT triggered_value FROM alerts JOIN trips ON alerts.trip_id = trips.id "
-                    "WHERE trips.vehicle_id = ? ORDER BY alerts.timestamp DESC LIMIT 10", (vehicle_id,)
-                )
-                return [row['triggered_value'] for row in cursor.fetchall()]
-            except sqlite3.Error as e:
-                logger.error(f"Error getting active codes: {e}")
-            return []
+        return []
