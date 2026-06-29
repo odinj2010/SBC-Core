@@ -154,8 +154,17 @@ class VehicleDBManager:
     # --- Trip Management ---
     def start_trip(self, vehicle_id: int) -> Optional[int]:
         """Starts a new trip for a given vehicle and returns the trip ID."""
-        logger.info(f"MOCK Started new trip with ID 999 for vehicle ID {vehicle_id}.")
-        return 999
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("INSERT INTO trips (vehicle_id, start_time) VALUES (?, ?)", (vehicle_id, time.time()))
+                self.conn.commit()
+                trip_id = cursor.lastrowid
+                logger.info(f"Started new trip with ID {trip_id} for vehicle ID {vehicle_id}.")
+                return trip_id
+            except sqlite3.Error as e:
+                logger.error(f"Error starting trip: {e}")
+                return None
 
     def end_trip(self, trip_id: int) -> None:
         """Marks a trip as completed by setting its end time."""
@@ -171,25 +180,64 @@ class VehicleDBManager:
 
     def log_reading(self, trip_id: int, command: str, value: Any, unit: Optional[str]) -> None:
         """Buffers a single OBD-II reading to be written in a batch transaction."""
-        pass
+        with self.lock:
+            self.pending_readings.append((trip_id, time.time(), command, str(value), unit))
             
     def flush_readings(self) -> None:
         """Writes all buffered readings to the database in a single transaction."""
-        pass
+        with self.lock:
+            if not self.pending_readings:
+                return
+            to_write = list(self.pending_readings)
+            self.pending_readings.clear()
+            
+            try:
+                cursor = self.conn.cursor()
+                cursor.executemany(
+                    "INSERT INTO readings (trip_id, timestamp, command, value, unit) VALUES (?, ?, ?, ?, ?)",
+                    to_write
+                )
+                self.conn.commit()
+            except sqlite3.Error as e:
+                logger.error(f"Error flushing buffered readings: {e}")
             
     def log_alert(self, trip_id: int, rule_id: int, triggered_value: str) -> None:
         """Logs a triggered alert event to the database."""
-        pass
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO alerts (trip_id, rule_id, timestamp, triggered_value) VALUES (?, ?, ?, ?)",
+                    (trip_id, rule_id, time.time(), triggered_value)
+                )
+                self.conn.commit()
+                logger.info(f"Logged alert for rule ID {rule_id} with value {triggered_value}.")
+            except sqlite3.Error as e:
+                logger.error(f"Error logging alert: {e}")
 
     # --- Alert Rule Management ---
     def get_alert_rules(self, vehicle_id: int) -> List[sqlite3.Row]:
         """Retrieves all alert rules for a specific vehicle."""
-        return []
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT * FROM alert_rules WHERE vehicle_id = ? AND is_enabled = 1 ORDER BY command", (vehicle_id,))
+                return cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Error fetching alert rules: {e}")
+                return []
 
     # --- Data Export and Maintenance ---
     def get_trip_readings(self, trip_id: int) -> List[sqlite3.Row]:
         """Fetches all readings for a specific trip, ordered by time."""
-        return []
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT timestamp, command, value, unit FROM readings WHERE trip_id = ? ORDER BY timestamp DESC LIMIT 200", (trip_id,))
+                return cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Error getting trip readings: {e}")
+                return []
 
     def export_trip_to_csv(self, trip_id: int, output_path: Path) -> bool:
         """Exports all data from a given trip to a CSV file."""
@@ -258,8 +306,34 @@ class VehicleDBManager:
 
     def add_or_get_alert_rule(self, vehicle_id: int, command: str, description: str) -> int:
         """Retrieves the ID of an alert rule for a command, or creates one if it doesn't exist."""
-        return 1
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT id FROM alert_rules WHERE vehicle_id = ? AND command = ?", (vehicle_id, command))
+                row = cursor.fetchone()
+                if row:
+                    return row['id']
+                else:
+                    cursor.execute(
+                        "INSERT INTO alert_rules (vehicle_id, command, condition, value, severity) VALUES (?, ?, ?, ?, ?)",
+                        (vehicle_id, command, '=', 1.0, 'CRITICAL')
+                    )
+                    self.conn.commit()
+                    return cursor.lastrowid
+            except sqlite3.Error as e:
+                logger.error(f"Error adding/getting alert rule: {e}")
+                return -1
 
     def get_last_active_fault_codes(self, vehicle_id: int) -> List[str]:
         """Fetches the last logged fault code codes from database."""
-        return []
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT triggered_value FROM alerts JOIN trips ON alerts.trip_id = trips.id "
+                    "WHERE trips.vehicle_id = ? ORDER BY alerts.timestamp DESC LIMIT 10", (vehicle_id,)
+                )
+                return [row['triggered_value'] for row in cursor.fetchall()]
+            except sqlite3.Error as e:
+                logger.error(f"Error getting active codes: {e}")
+            return []
