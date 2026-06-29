@@ -471,7 +471,7 @@ class VehiclePage(ctk.CTkFrame):
         self.is_logging_trip = not self.is_logging_trip
         if self.is_logging_trip:
             self.current_trip_id = self.db_manager.start_trip(self.current_vehicle_id)
-            self.tab_view.set("Data Logger")
+            # self.tab_view.set("Data Logger")
             self.update_log_display()
             self._start_log_updater()
         else:
