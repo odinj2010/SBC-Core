@@ -189,23 +189,28 @@ class AIPage(ctk.CTkFrame):
             self.ui_update_queue.put("show_indicator")
             sound_file_path = None
             try:
+                logger.info("[TTS] run_tts started")
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio_file:
                     sound_file_path = temp_audio_file.name
                 
+                logger.info(f"[TTS] Synthesizing: {text_to_speak!r}")
                 with open(sound_file_path, "wb") as f:
                     self._piper_voice.synthesize(text_to_speak, f)
+                logger.info("[TTS] Synthesis completed. Sending playback request...")
                 
                 # Delegate playback to the main controller
                 self.controller.radio_play_tts(sound_file_path)
+                logger.info("[TTS] Playback request sent.")
 
             except Exception as e:
-                logger.error(f"Error during TTS generation: {e}")
+                logger.error(f"[TTS] Error during TTS generation: {e}", exc_info=True)
                 if sound_file_path and os.path.exists(sound_file_path):
                     try: os.remove(sound_file_path) # Clean up if something went wrong before playback
                     except OSError: pass
             finally:
                 # The controller will be responsible for deleting the file after playback
                 self.ui_update_queue.put("hide_indicator")
+                logger.info("[TTS] run_tts finished")
 
         threading.Thread(target=run_tts, daemon=True).start()
 
