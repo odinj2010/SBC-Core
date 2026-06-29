@@ -434,6 +434,11 @@ class VehiclePage(ctk.CTkFrame):
         else: self.status_label.configure(text="Status: DISCONNECTED", text_color=ERROR_COLOR)
 
     def on_show(self):
+        if hasattr(self, 'db_manager') and self.db_manager:
+            try:
+                self.db_manager.close()
+            except Exception:
+                pass
         self.db_manager = VehicleDBManager(Path(self.controller.app_dir) / "vehicle_data.db")
         self.load_vehicle_profiles()
         if SERIAL_AVAILABLE: self.scan_for_ports()
