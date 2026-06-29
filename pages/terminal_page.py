@@ -3,6 +3,7 @@ import tkinter as tk
 import customtkinter as ctk
 import threading
 import logging
+import queue
 from PIL import Image
 import os
 import sys
@@ -69,6 +70,8 @@ class TerminalPage(ctk.CTkFrame):
         self.output.tag_config("ERROR", foreground="#FF5500")
         self.output.tag_config("CRITICAL", foreground="#000000", background="#FFD700")
 
+        self.log_queue = queue.Queue()
+        self.poll_log_queue()
         self.start_shell_process()
 
     def start_shell_process(self):
@@ -120,14 +123,21 @@ class TerminalPage(ctk.CTkFrame):
             except Exception as e:
                 self.write(f"\n--- TERMINAL ERROR: {e} ---\n", "ERROR"); break
 
+    def poll_log_queue(self):
+        try:
+            while True:
+                message, tags = self.log_queue.get_nowait()
+                if self.output.winfo_exists():
+                    self.output.configure(state="normal")
+                    self.output.insert(tk.END, message, tags)
+                    self.output.see(tk.END)
+                    self.output.configure(state="disabled")
+        except queue.Empty:
+            pass
+        self.after(50, self.poll_log_queue)
+
     def write(self, message, tags=None):
-        def _write():
-            if not self.output.winfo_exists(): return
-            self.output.configure(state="normal")
-            self.output.insert(tk.END, message, tags)
-            self.output.see(tk.END)
-            self.output.configure(state="disabled")
-        self.after(0, _write)
+        self.log_queue.put((message, tags))
     
     def cleanup(self):
         if self.proc and self.proc.isalive():
@@ -135,7 +145,7 @@ class TerminalPage(ctk.CTkFrame):
             self.proc.close(force=True)
 
 class TerminalLoggingHandler(logging.Handler):
-    """Redirects the logging module to the terminal widget."""
+    """Redirects the logging module to the terminal widget via a thread-safe queue."""
     def __init__(self, terminal_page):
         super().__init__()
         self.terminal = terminal_page
@@ -147,6 +157,7 @@ class TerminalLoggingHandler(logging.Handler):
     def emit(self, record):
         tag = self.level_map.get(record.levelno, "INFO")
         try:
-            self.terminal.write(self.format(record) + '\n', tag)
+            msg = self.format(record) + '\n'
+            self.terminal.log_queue.put((msg, tag))
         except Exception:
             self.handleError(record)
