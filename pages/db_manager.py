@@ -8,6 +8,7 @@ import sqlite3
 import logging
 import csv
 import time
+import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -25,6 +26,7 @@ class VehicleDBManager:
             db_path: The file path for the SQLite database.
         """
         self.db_path = db_path
+        self.lock = threading.Lock()
         # The connection is initialized with check_same_thread=False to allow
         # database writes from background threads (e.g., the OBD polling thread).
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -35,12 +37,13 @@ class VehicleDBManager:
 
     def _execute_script(self, script: str) -> None:
         """Helper to execute multi-statement SQL scripts."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.executescript(script)
-            self.conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database script execution error: {e}")
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.executescript(script)
+                self.conn.commit()
+            except sqlite3.Error as e:
+                logger.error(f"Database script execution error: {e}")
             
     def _create_tables(self) -> None:
         """Creates all necessary database tables if they do not already exist."""
@@ -163,30 +166,32 @@ class VehicleDBManager:
     # --- Data and Alert Logging ---
     def log_reading(self, trip_id: int, command: str, value: Any, unit: Optional[str]) -> None:
         """Logs a single OBD-II reading to the database."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "INSERT INTO readings (trip_id, timestamp, command, value, unit) VALUES (?, ?, ?, ?, ?)",
-                (trip_id, time.time(), command, str(value), unit)
-            )
-            self.conn.commit()
-        except sqlite3.Error as e:
-            # Avoid flooding logs for this common operation.
-            # logger.debug(f"Error logging reading: {e}")
-            pass
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO readings (trip_id, timestamp, command, value, unit) VALUES (?, ?, ?, ?, ?)",
+                    (trip_id, time.time(), command, str(value), unit)
+                )
+                self.conn.commit()
+            except sqlite3.Error as e:
+                # Avoid flooding logs for this common operation.
+                # logger.debug(f"Error logging reading: {e}")
+                pass
             
     def log_alert(self, trip_id: int, rule_id: int, triggered_value: str) -> None:
         """Logs a triggered alert event to the database."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "INSERT INTO alerts (trip_id, rule_id, timestamp, triggered_value) VALUES (?, ?, ?, ?)",
-                (trip_id, rule_id, time.time(), triggered_value)
-            )
-            self.conn.commit()
-            logger.info(f"Logged alert for rule ID {rule_id} with value {triggered_value}.")
-        except sqlite3.Error as e:
-            logger.error(f"Error logging alert: {e}")
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO alerts (trip_id, rule_id, timestamp, triggered_value) VALUES (?, ?, ?, ?)",
+                    (trip_id, rule_id, time.time(), triggered_value)
+                )
+                self.conn.commit()
+                logger.info(f"Logged alert for rule ID {rule_id} with value {triggered_value}.")
+            except sqlite3.Error as e:
+                logger.error(f"Error logging alert: {e}")
 
     # --- Alert Rule Management ---
     def get_alert_rules(self, vehicle_id: int) -> List[sqlite3.Row]:
@@ -275,32 +280,34 @@ class VehicleDBManager:
 
     def add_or_get_alert_rule(self, vehicle_id: int, command: str, description: str) -> int:
         """Retrieves the ID of an alert rule for a command, or creates one if it doesn't exist."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT id FROM alert_rules WHERE vehicle_id = ? AND command = ?", (vehicle_id, command))
-            row = cursor.fetchone()
-            if row:
-                return row['id']
-            else:
-                cursor.execute(
-                    "INSERT INTO alert_rules (vehicle_id, command, condition, value, severity) VALUES (?, ?, ?, ?, ?)",
-                    (vehicle_id, command, '=', 1.0, 'CRITICAL')
-                )
-                self.conn.commit()
-                return cursor.lastrowid
-        except sqlite3.Error as e:
-            logger.error(f"Error adding/getting alert rule: {e}")
-            return -1
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT id FROM alert_rules WHERE vehicle_id = ? AND command = ?", (vehicle_id, command))
+                row = cursor.fetchone()
+                if row:
+                    return row['id']
+                else:
+                    cursor.execute(
+                        "INSERT INTO alert_rules (vehicle_id, command, condition, value, severity) VALUES (?, ?, ?, ?, ?)",
+                        (vehicle_id, command, '=', 1.0, 'CRITICAL')
+                    )
+                    self.conn.commit()
+                    return cursor.lastrowid
+            except sqlite3.Error as e:
+                logger.error(f"Error adding/getting alert rule: {e}")
+                return -1
 
     def get_last_active_fault_codes(self, vehicle_id: int) -> List[str]:
         """Fetches the last logged fault code codes from database."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "SELECT DISTINCT triggered_value FROM alerts JOIN trips ON alerts.trip_id = trips.id "
-                "WHERE trips.vehicle_id = ? ORDER BY alerts.timestamp DESC LIMIT 10", (vehicle_id,)
-            )
-            return [row['triggered_value'] for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Error getting active codes: {e}")
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT triggered_value FROM alerts JOIN trips ON alerts.trip_id = trips.id "
+                    "WHERE trips.vehicle_id = ? ORDER BY alerts.timestamp DESC LIMIT 10", (vehicle_id,)
+                )
+                return [row['triggered_value'] for row in cursor.fetchall()]
+            except sqlite3.Error as e:
+                logger.error(f"Error getting active codes: {e}")
             return []
