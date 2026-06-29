@@ -120,53 +120,57 @@ class VehicleDBManager:
     # --- Vehicle Profile Management ---
     def add_or_get_vehicle(self, vin: str, name: str) -> int:
         """Adds a new vehicle if the VIN doesn't exist, or returns the ID of an existing one."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT id FROM vehicles WHERE vin = ?", (vin,))
-            row = cursor.fetchone()
-            if row:
-                return row['id']
-            else:
-                cursor.execute("INSERT INTO vehicles (vin, name) VALUES (?, ?)", (vin, name))
-                self.conn.commit()
-                return cursor.lastrowid
-        except sqlite3.Error as e:
-            logger.error(f"Error adding/getting vehicle: {e}")
-            return -1
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT id FROM vehicles WHERE vin = ?", (vin,))
+                row = cursor.fetchone()
+                if row:
+                    return row['id']
+                else:
+                    cursor.execute("INSERT INTO vehicles (vin, name) VALUES (?, ?)", (vin, name))
+                    self.conn.commit()
+                    return cursor.lastrowid
+            except sqlite3.Error as e:
+                logger.error(f"Error adding/getting vehicle: {e}")
+                return -1
 
     def get_all_vehicles(self) -> List[sqlite3.Row]:
         """Retrieves all saved vehicle profiles."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT id, vin, name FROM vehicles ORDER BY name")
-            return cursor.fetchall()
-        except sqlite3.Error as e:
-            logger.error(f"Error getting all vehicles: {e}")
-            return []
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT id, vin, name FROM vehicles ORDER BY name")
+                return cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Error getting all vehicles: {e}")
+                return []
 
     # --- Trip Management ---
     def start_trip(self, vehicle_id: int) -> Optional[int]:
         """Starts a new trip for a given vehicle and returns the trip ID."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("INSERT INTO trips (vehicle_id, start_time) VALUES (?, ?)", (vehicle_id, time.time()))
-            self.conn.commit()
-            trip_id = cursor.lastrowid
-            logger.info(f"Started new trip with ID {trip_id} for vehicle ID {vehicle_id}.")
-            return trip_id
-        except sqlite3.Error as e:
-            logger.error(f"Error starting trip: {e}")
-            return None
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("INSERT INTO trips (vehicle_id, start_time) VALUES (?, ?)", (vehicle_id, time.time()))
+                self.conn.commit()
+                trip_id = cursor.lastrowid
+                logger.info(f"Started new trip with ID {trip_id} for vehicle ID {vehicle_id}.")
+                return trip_id
+            except sqlite3.Error as e:
+                logger.error(f"Error starting trip: {e}")
+                return None
 
     def end_trip(self, trip_id: int) -> None:
         """Marks a trip as completed by setting its end time."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("UPDATE trips SET end_time = ? WHERE id = ?", (time.time(), trip_id))
-            self.conn.commit()
-            logger.info(f"Ended trip with ID {trip_id}.")
-        except sqlite3.Error as e:
-            logger.error(f"Error ending trip: {e}")
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("UPDATE trips SET end_time = ? WHERE id = ?", (time.time(), trip_id))
+                self.conn.commit()
+                logger.info(f"Ended trip with ID {trip_id}.")
+            except sqlite3.Error as e:
+                logger.error(f"Error ending trip: {e}")
 
     # --- Data and Alert Logging ---
     def log_reading(self, trip_id: int, command: str, value: Any, unit: Optional[str]) -> None:
@@ -201,87 +205,91 @@ class VehicleDBManager:
     # --- Alert Rule Management ---
     def get_alert_rules(self, vehicle_id: int) -> List[sqlite3.Row]:
         """Retrieves all alert rules for a specific vehicle."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT * FROM alert_rules WHERE vehicle_id = ? AND is_enabled = 1 ORDER BY command", (vehicle_id,))
-            return cursor.fetchall()
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching alert rules: {e}")
-            return []
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT * FROM alert_rules WHERE vehicle_id = ? AND is_enabled = 1 ORDER BY command", (vehicle_id,))
+                return cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Error fetching alert rules: {e}")
+                return []
 
     # --- Data Export and Maintenance ---
     def get_trip_readings(self, trip_id: int) -> List[sqlite3.Row]:
         """Fetches all readings for a specific trip, ordered by time."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT timestamp, command, value, unit FROM readings WHERE trip_id = ? ORDER BY timestamp DESC LIMIT 200", (trip_id,))
-            return cursor.fetchall()
-        except sqlite3.Error as e:
-            logger.error(f"Error getting trip readings: {e}")
-            return []
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT timestamp, command, value, unit FROM readings WHERE trip_id = ? ORDER BY timestamp DESC LIMIT 200", (trip_id,))
+                return cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Error getting trip readings: {e}")
+                return []
 
     def export_trip_to_csv(self, trip_id: int, output_path: Path) -> bool:
         """Exports all data from a given trip to a CSV file."""
         logger.info(f"Exporting trip {trip_id} to {output_path}...")
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT timestamp, command, value, unit FROM readings WHERE trip_id = ? ORDER BY timestamp", (trip_id,))
-            rows = cursor.fetchall()
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT timestamp, command, value, unit FROM readings WHERE trip_id = ? ORDER BY timestamp", (trip_id,))
+                rows = cursor.fetchall()
 
-            if not rows:
-                logger.warning(f"No data found for trip ID {trip_id} to export.")
+                if not rows:
+                    logger.warning(f"No data found for trip ID {trip_id} to export.")
+                    return False
+
+                with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(['timestamp', 'command', 'value', 'unit'])
+                    for row in rows:
+                        writer.writerow([
+                            time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(row['timestamp'])),
+                            row['command'],
+                            row['value'],
+                            row['unit']
+                        ])
+                logger.info(f"Successfully exported trip {trip_id} to CSV.")
+                return True
+            except (sqlite3.Error, IOError) as e:
+                logger.error(f"Failed to export trip to CSV: {e}")
                 return False
-
-            with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(['timestamp', 'command', 'value', 'unit'])
-                for row in rows:
-                    writer.writerow([
-                        time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(row['timestamp'])),
-                        row['command'],
-                        row['value'],
-                        row['unit']
-                    ])
-            logger.info(f"Successfully exported trip {trip_id} to CSV.")
-            return True
-        except (sqlite3.Error, IOError) as e:
-            logger.error(f"Failed to export trip to CSV: {e}")
-            return False
 
     def prune_old_data(self, days_to_keep: int = 30) -> Tuple[int, int]:
         """Deletes trips and their associated data older than a specified number of days."""
         deleted_trips = 0
         deleted_readings = 0
-        try:
-            cutoff_time = time.time() - (days_to_keep * 86400)
-            cursor = self.conn.cursor()
-            
-            # Find old trips to get their IDs
-            cursor.execute("SELECT id FROM trips WHERE start_time < ?", (cutoff_time,))
-            old_trip_ids = [row['id'] for row in cursor.fetchall()]
-            
-            if old_trip_ids:
-                # Use parameter substitution to avoid SQL injection
-                placeholders = ','.join('?' for _ in old_trip_ids)
+        with self.lock:
+            try:
+                cutoff_time = time.time() - (days_to_keep * 86400)
+                cursor = self.conn.cursor()
                 
-                # Delete readings and alerts from old trips
-                res_readings = cursor.execute(f"DELETE FROM readings WHERE trip_id IN ({placeholders})", old_trip_ids)
-                deleted_readings = res_readings.rowcount
-                cursor.execute(f"DELETE FROM alerts WHERE trip_id IN ({placeholders})", old_trip_ids)
-
-                # Finally, delete the old trips
-                res_trips = cursor.execute(f"DELETE FROM trips WHERE id IN ({placeholders})", old_trip_ids)
-                deleted_trips = res_trips.rowcount
-
-                self.conn.commit()
-                # Run VACUUM to reclaim disk space
-                self.conn.execute("VACUUM")
-                logger.info(f"Pruned {deleted_trips} old trips and {deleted_readings} readings.")
-
-        except sqlite3.Error as e:
-            logger.error(f"Error during database pruning: {e}")
-        
-        return deleted_trips, deleted_readings
+                # Find old trips to get their IDs
+                cursor.execute("SELECT id FROM trips WHERE start_time < ?", (cutoff_time,))
+                old_trip_ids = [row['id'] for row in cursor.fetchall()]
+                
+                if old_trip_ids:
+                    # Use parameter substitution to avoid SQL injection
+                    placeholders = ','.join('?' for _ in old_trip_ids)
+                    
+                    # Delete readings and alerts from old trips
+                    res_readings = cursor.execute(f"DELETE FROM readings WHERE trip_id IN ({placeholders})", old_trip_ids)
+                    deleted_readings = res_readings.rowcount
+                    cursor.execute(f"DELETE FROM alerts WHERE trip_id IN ({placeholders})", old_trip_ids)
+     
+                    # Finally, delete the old trips
+                    res_trips = cursor.execute(f"DELETE FROM trips WHERE id IN ({placeholders})", old_trip_ids)
+                    deleted_trips = res_trips.rowcount
+     
+                    self.conn.commit()
+                    # Run VACUUM to reclaim disk space
+                    self.conn.execute("VACUUM")
+                    logger.info(f"Pruned {deleted_trips} old trips and {deleted_readings} readings.")
+     
+            except sqlite3.Error as e:
+                logger.error(f"Error during database pruning: {e}")
+            
+            return deleted_trips, deleted_readings
 
     def add_or_get_alert_rule(self, vehicle_id: int, command: str, description: str) -> int:
         """Retrieves the ID of an alert rule for a command, or creates one if it doesn't exist."""
