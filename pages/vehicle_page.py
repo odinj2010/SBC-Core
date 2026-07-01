@@ -150,8 +150,8 @@ class MockOBDConnection:
             # Simple driving physics simulation
             self.throttle = 15.0 + math.sin(self.time_counter * 0.1) * 10.0
             if math.sin(self.time_counter * 0.05) > 0:
-                self.rpm = min(6500.0, 1000 + math.sin(self.time_counter * 0.15) * 4000 + random.uniform(-50, 50))
-                self.speed = min(120.0, 20 + (self.rpm / 50.0))
+                self.rpm = max(1000.0, min(6500.0, 1000 + math.sin(self.time_counter * 0.15) * 4000 + random.uniform(-50, 50)))
+                self.speed = max(0.0, min(120.0, 20 + (self.rpm / 50.0)))
                 self.throttle = min(100.0, self.throttle + 40.0)
             else:
                 self.rpm = max(800.0, 1500 + math.sin(self.time_counter * 0.1) * 500 + random.uniform(-20, 20))
@@ -297,7 +297,7 @@ class VehiclePage(ctk.CTkFrame):
         # Supported Commands Config
         self.SUPPORTED_COMMANDS: List[OBDCommand] = [
             OBDCommand(cmd=obd.commands.RPM, name="RPM", label="Engine", unit="RPM"),
-            OBDCommand(cmd=obd.commands.SPEED, name="SPEED", label="Speed", unit="KPH"),
+            OBDCommand(cmd=obd.commands.SPEED, name="SPEED", label="Speed", unit="MPH"),
             OBDCommand(cmd=obd.commands.COOLANT_TEMP, name="COOLANT_TEMP", label="Coolant", unit="°C"),
             OBDCommand(cmd=obd.commands.THROTTLE_POS, name="THROTTLE_POS", label="Throttle", unit="%"),
         ]
@@ -677,17 +677,27 @@ class VehiclePage(ctk.CTkFrame):
         def callback(response: obd.OBDResponse):
             if not response.is_null():
                 val = response.value.magnitude
-                self.after(0, self.gauges[cmd_name].update_value, val)
                 
-                # Keep state values updated for MPG calculations
+                # Keep state values updated for MPG calculations (raw KPH)
                 if cmd_name == "RPM":
                     self.last_rpm = val
                 elif cmd_name == "SPEED":
                     self.last_speed = val
+                    val = val * 0.621371  # Convert to MPH for display and database logging
+                    
+                self.after(0, self.gauges[cmd_name].update_value, val)
                     
                 if self.is_logging_trip and self.current_trip_id:
                     self.db_manager.log_reading(self.current_trip_id, cmd_name, val, unit)
-                self.alert_manager.check_value(cmd_name, response)
+                
+                # Ensure alerts evaluate the speed in MPH rather than KPH
+                if cmd_name == "SPEED":
+                    class MphResponse:
+                        value = type('Val', (), {'magnitude': val, 'units': 'MPH'})()
+                        def is_null(self): return False
+                    self.alert_manager.check_value(cmd_name, MphResponse())
+                else:
+                    self.alert_manager.check_value(cmd_name, response)
                 self.recalculate_mpg()
         return callback
 
